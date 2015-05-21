@@ -142,7 +142,7 @@ public class DebugActivity extends Activity {
             @Override
             public void onClick(View v) {
                 Intent startIntent = new Intent(DebugActivity.this, BluetoothCommunicationService.class);
-                startIntent.setAction(BluetoothCommunicationService.ACTION_SETTIME);
+                startIntent.setAction(BluetoothCommunicationService.ACTION_SETALARM);
                 startService(startIntent);
             }
         });

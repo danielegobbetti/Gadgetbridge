@@ -43,6 +43,8 @@ public class BluetoothCommunicationService extends Service {
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.notification_email";
     public static final String ACTION_CALLSTATE
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.callstate";
+    public static final String ACTION_SETALARM
+            = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.setalarm";
     public static final String ACTION_SETTIME
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.settime";
     public static final String ACTION_SETMUSICINFO
@@ -212,6 +214,9 @@ public class BluetoothCommunicationService extends Service {
                 break;
             case ACTION_SETTIME:
                 mDeviceSupport.onSetTime(-1);
+                break;
+            case ACTION_SETALARM:
+                mDeviceSupport.onSetAlarm();
                 break;
             case ACTION_SETMUSICINFO:
                 String artist = intent.getStringExtra("music_artist");

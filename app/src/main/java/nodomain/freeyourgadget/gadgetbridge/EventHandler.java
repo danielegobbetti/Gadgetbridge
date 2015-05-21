@@ -11,6 +11,8 @@ public interface EventHandler {
 
     void onSetTime(long ts);
 
+    void onSetAlarm(); //TODO: find out how to pass the needed parameters
+
     void onSetCallState(String number, String name, GBCommand command);
 
     void onSetMusicInfo(String artist, String album, String track);

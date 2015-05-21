@@ -26,4 +26,10 @@ public class PebbleSupport extends AbstractBTDeviceSupport {
     public boolean useAutoConnect() {
         return false;
     }
+
+    @Override
+    public void onSetAlarm() {
+        //TODO: is there a way to set alarms on the Pebble?
+	return false;
+    }
 }

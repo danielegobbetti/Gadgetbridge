@@ -241,6 +241,17 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         }
     }
 
+    public void onSetAlarm() {
+        try {
+            TransactionBuilder builder = performInitialized("Set alarm");
+            setAlarm(builder);
+            builder.queue(getQueue());
+        } catch (IOException ex) {
+            LOG.error("Unable to set alarm on MI device", ex);
+        }
+    }
+
+
     /**
      * Sets the current time to the Mi device using the given builder.
      *
@@ -270,6 +281,87 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         }
         return this;
     }
+
+    /**
+     * Sets an alarm on the Mi device using the given builder.
+     *
+     * TODO: it's using hardcoded values for alarm time, repetition and duration
+     *
+     * @param builder
+     */
+    private MiBandSupport setAlarm(TransactionBuilder builder) {
+	    /* ===byte 1===
+	     * index (upper bound unknown)
+	     */
+
+	    /* ===byte 2===
+	     * enabled (1 if enabled, 0 if not)
+	     */
+
+	    /* ===bytes 3 to 8===
+	     * Calendar object (only hour and minute are set/used, see )
+	     * if the date is in the past the alarm is not being set apparently
+	     */
+
+	    /* ===byte 9===
+	     * smart wakeup duration (unit seems to be minutes)
+	     * when being awake I get a repetition of the alarm every 10 minutes 
+	     * - starting with the time set above
+	     * - ending after the amount of minutes set here
+	     *
+	     * NB: according to my tests it has to be a multiple of 10
+	     */
+
+	    /* ===byte 10===
+	     * repetition mask
+	     * ALARM_ONCE = 0
+	     * ALARM_MON = 1
+	     * ALARM_TUE = 2
+	     * ALARM_WED = 4
+	     * ALARM_THU = 8
+	     * ALARM_FRI = 16
+	     * ALARM_SAT = 32
+	     * ALARM_SUN = 64
+	     */
+
+	    Calendar alarm = Calendar.getInstance();
+
+	    alarm.set(Calendar.HOUR_OF_DAY, 7);
+	    alarm.set(Calendar.MINUTE, 0);
+
+	    int ALARM_ONCE = 0;
+	    int ALARM_MON = 1;
+	    int ALARM_TUE = 2;
+	    int ALARM_WED = 4;
+	    int ALARM_THU = 8;
+	    int ALARM_FRI = 16;
+	    int ALARM_SAT = 32;
+	    int ALARM_SUN = 64;
+
+
+	    byte[] alarmMessage = new byte[]{
+		    (byte) MiBandService.COMMAND_SET_TIMER,
+		    (byte) 0,//index
+		    (byte) 1,//enabled
+		    (byte) (alarm.get(Calendar.YEAR) - 2000),
+		    (byte) alarm.get(Calendar.MONTH),
+		    (byte) alarm.get(Calendar.DATE) ,
+		    (byte) alarm.get(Calendar.HOUR_OF_DAY),
+		    (byte) alarm.get(Calendar.MINUTE),
+		    (byte) alarm.get(Calendar.SECOND),
+		    (byte) 0,//smart wakeup duration
+		    (byte) ALARM_ONCE//repetition mask
+	    };
+
+	    BluetoothGattCharacteristic characteristic = getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT);
+	    if (characteristic != null) {
+		    builder.write(characteristic, alarmMessage);
+	    } else {
+		    LOG.info("Unable to set alarm -- characteristic not available");
+	    }
+	    return this;
+    }
+
 
     @Override
     public void onSetCallState(String number, String name, GBCommand command) {

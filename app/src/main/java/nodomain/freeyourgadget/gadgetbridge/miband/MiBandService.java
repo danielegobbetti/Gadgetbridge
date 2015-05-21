@@ -120,6 +120,7 @@ public class MiBandService {
 
     public static final byte MSG_BATTERY_STATUS_CHANGED = 0x7;
 
+    public static final byte COMMAND_SET_TIMER = 0x4;
     /*
 
 	public static final  COMMAND_CONFIRM_ACTIVITY_DATA_TRANSFER_COMPLETE = 0xat;
@@ -143,8 +144,6 @@ public class MiBandService {
 	public static final COMMAND_SET_REALTIME_STEP = 0x10t
 
 	public static final COMMAND_SET_REALTIME_STEPS_NOTIFICATION = 0x3t
-
-	public static final COMMAND_SET_TIMER = 0x4t
 
 	public static final COMMAND_SET_WEAR_LOCATION = 0xft
 
