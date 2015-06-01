@@ -1,10 +1,17 @@
 package nodomain.freeyourgadget.gadgetbridge;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.UUID;
 
+import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommand;
+import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandSendBytes;
 import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceProtocol;
 
 public abstract class AbstractBTDeviceSupport extends AbstractDeviceSupport {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractDeviceSupport.class);
 
     private GBDeviceProtocol gbDeviceProtocol;
     private GBDeviceIoThread gbDeviceIOThread;
@@ -51,6 +58,24 @@ public abstract class AbstractBTDeviceSupport extends AbstractDeviceSupport {
         if (bytes != null && gbDeviceIOThread != null) {
             gbDeviceIOThread.write(bytes);
         }
+    }
+
+    public void handleGBDeviceCommand(GBDeviceCommandSendBytes sendBytes) {
+        sendToDevice(sendBytes.encodedBytes);
+    }
+
+    @Override
+    public void evaluateGBDeviceCommand(GBDeviceCommand deviceCmd) {
+
+        switch (deviceCmd.commandClass) {
+            case SEND_BYTES:
+                handleGBDeviceCommand((GBDeviceCommandSendBytes) deviceCmd);
+                return;
+            default:
+                break;
+        }
+
+        super.evaluateGBDeviceCommand(deviceCmd);
     }
 
     @Override

@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.SimpleTimeZone;
-import java.util.TimeZone;
 import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBCommand;
@@ -173,9 +172,7 @@ public class PebbleProtocol extends GBDeviceProtocol {
     private ArrayList<UUID> tmpUUIDS = new ArrayList<>();
 
     private MorpheuzSupport mMorpheuzSupport = new MorpheuzSupport(PebbleProtocol.this);
-    // FIXME: this does not belong here
-    static final UUID WeatherNeatUUID = UUID.fromString("3684003b-a685-45f9-a713-abc6364ba051");
-
+    private WeatherNeatSupport mWeatherNeatSupport = new WeatherNeatSupport(PebbleProtocol.this);
 
     private static byte[] encodeMessage(short endpoint, byte type, int cookie, String[] parts) {
         // Calculate length first
@@ -223,9 +220,9 @@ public class PebbleProtocol extends GBDeviceProtocol {
 
     @Override
     public byte[] encodeSMS(String from, String body) {
-        Long ts = System.currentTimeMillis() / 1000;
-        TimeZone tz = SimpleTimeZone.getDefault();
-        ts += (tz.getOffset(ts) + tz.getDSTSavings()) / 1000;
+        Long ts = System.currentTimeMillis();
+        ts += (SimpleTimeZone.getDefault().getOffset(ts));
+        ts /= 1000;
 
         if (USE_OLD_NOTIFICATION_PROTOCOL) {
             String[] parts = {from, body, ts.toString()};
@@ -238,9 +235,9 @@ public class PebbleProtocol extends GBDeviceProtocol {
 
     @Override
     public byte[] encodeEmail(String from, String subject, String body) {
-        Long ts = System.currentTimeMillis() / 1000;
-        TimeZone tz = SimpleTimeZone.getDefault();
-        ts += (tz.getOffset(ts) + tz.getDSTSavings()) / 1000;
+        Long ts = System.currentTimeMillis();
+        ts += (SimpleTimeZone.getDefault().getOffset(ts));
+        ts /= 1000;
         String tsstring = ts.toString(); // SIC
         String[] parts = {from, body, tsstring, subject};
 
@@ -255,16 +252,15 @@ public class PebbleProtocol extends GBDeviceProtocol {
     @Override
     public byte[] encodeSetTime(long ts) {
         if (ts == -1) {
-            ts = System.currentTimeMillis() / 1000;
-            TimeZone tz = SimpleTimeZone.getDefault();
-            ts += (tz.getOffset(ts) + tz.getDSTSavings()) / 1000;
+            ts = System.currentTimeMillis();
+            ts += (SimpleTimeZone.getDefault().getOffset(ts));
         }
         ByteBuffer buf = ByteBuffer.allocate(LENGTH_PREFIX + LENGTH_SETTIME);
         buf.order(ByteOrder.BIG_ENDIAN);
         buf.putShort(LENGTH_SETTIME);
         buf.putShort(ENDPOINT_TIME);
         buf.put(TIME_SETTIME);
-        buf.putInt((int) ts);
+        buf.putInt((int) (ts / 1000));
 
         return buf.array();
     }
@@ -545,24 +541,6 @@ public class PebbleProtocol extends GBDeviceProtocol {
         return buf.array();
     }
 
-    private byte[] encodeApplicationMessageWeatherNeatTest() {
-        // encode push message for WeatherNeat
-        ArrayList<Pair<Integer, Object>> pairs = new ArrayList<>();
-        pairs.add(new Pair<>(1, (Object) "Gadgetbridge")); // city
-        pairs.add(new Pair<>(2, (Object) "-22C")); // temperature
-        pairs.add(new Pair<>(3, (Object) "this is just a stupid test")); // condition
-        pairs.add(new Pair<>(5, (Object) 3)); // seconds for backlight on shake
-        byte[] testMessage = encodeApplicationMessagePush(ENDPOINT_APPLICATIONMESSAGE, WeatherNeatUUID, pairs);
-
-        ByteBuffer buf = ByteBuffer.allocate(testMessage.length + LENGTH_PREFIX + 18); // +ACK
-
-        // encode ack and put in front of push message (hack for acknowledging the last message)
-        buf.put(encodeApplicationMessageAck(WeatherNeatUUID, (byte) (last_id - 1)));
-        buf.put(testMessage);
-
-        return buf.array();
-    }
-
     byte[] encodeApplicationMessageAck(UUID uuid, byte id) {
         ByteBuffer buf = ByteBuffer.allocate(LENGTH_PREFIX + 18); // +ACK
 
@@ -808,11 +786,9 @@ public class PebbleProtocol extends GBDeviceProtocol {
                     case APPLICATIONMESSAGE_PUSH:
                         UUID uuid = new UUID(uuid_high, uuid_low);
                         LOG.info("got APPLICATIONMESSAGE PUSH from UUID " + uuid);
-                        if (WeatherNeatUUID.equals(uuid)) {
-                            LOG.info("We know you, you are WeatherNeat");
-                            GBDeviceCommandSendBytes sendBytes = new GBDeviceCommandSendBytes();
-                            sendBytes.encodedBytes = encodeApplicationMessageWeatherNeatTest();
-                            cmd = sendBytes;
+                        if (WeatherNeatSupport.uuid.equals(uuid)) {
+                            ArrayList<Pair<Integer, Object>> dict = decodeDict(buf);
+                            cmd = mWeatherNeatSupport.handleMessage(dict);
                         } else if (MorpheuzSupport.uuid.equals(uuid)) {
                             ArrayList<Pair<Integer, Object>> dict = decodeDict(buf);
                             cmd = mMorpheuzSupport.handleMessage(dict);
