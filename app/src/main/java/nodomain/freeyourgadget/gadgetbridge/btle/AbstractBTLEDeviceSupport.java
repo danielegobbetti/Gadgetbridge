@@ -2,6 +2,7 @@ package nodomain.freeyourgadget.gadgetbridge.btle;
 
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 
 import org.slf4j.Logger;
@@ -53,6 +54,10 @@ public abstract class AbstractBTLEDeviceSupport extends AbstractDeviceSupport im
         }
     }
 
+    protected TransactionBuilder createTransactionBuilder(String taskName) {
+        return new TransactionBuilder(taskName);
+    }
+
     /**
      * Send commands like this to the device:
      * <p>
@@ -71,10 +76,11 @@ public abstract class AbstractBTLEDeviceSupport extends AbstractDeviceSupport im
         }
         if (!isInitialized()) {
             // first, add a transaction that performs device initialization
-            TransactionBuilder builder = new TransactionBuilder("Initialize device");
+            TransactionBuilder builder = createTransactionBuilder("Initialize device");
+            builder.add(new CheckInitializedAction(gbDevice));
             initializeDevice(builder).queue(getQueue());
         }
-        return new TransactionBuilder(taskName);
+        return createTransactionBuilder(taskName);
     }
 
     /**
@@ -156,7 +162,7 @@ public abstract class AbstractBTLEDeviceSupport extends AbstractDeviceSupport im
     @Override
     public void onServicesDiscovered(BluetoothGatt gatt) {
         gattServicesDiscovered(getQueue().getSupportedGattServices());
-        initializeDevice(new TransactionBuilder("Initializing device")).queue(getQueue());
+        initializeDevice(createTransactionBuilder("Initializing device")).queue(getQueue());
     }
 
     @Override
@@ -167,6 +173,14 @@ public abstract class AbstractBTLEDeviceSupport extends AbstractDeviceSupport im
     @Override
     public void onCharacteristicWrite(BluetoothGatt gatt,
                                       BluetoothGattCharacteristic characteristic, int status) {
+    }
+
+    @Override
+    public void onDescriptorRead(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+    }
+
+    @Override
+    public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
     }
 
     @Override

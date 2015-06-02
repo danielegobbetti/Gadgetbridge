@@ -11,8 +11,13 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.GregorianCalendar;
 import java.util.UUID;
 
+import java.text.DateFormat;
+
+import nodomain.freeyourgadget.gadgetbridge.GBActivitySample;
+import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.GBCommand;
 import nodomain.freeyourgadget.gadgetbridge.GBDevice.State;
 import nodomain.freeyourgadget.gadgetbridge.btle.AbstractBTLEDeviceSupport;
@@ -40,6 +45,22 @@ import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.getNotific
 public class MiBandSupport extends AbstractBTLEDeviceSupport {
 
     private static final Logger LOG = LoggerFactory.getLogger(MiBandSupport.class);
+    private static final Logger ACTIVITYLOG = LoggerFactory.getLogger("activity");
+
+    //temporary buffer, size is 60 because we want to store complete minutes (1 minute = 3 bytes)
+    private static final int activityDataHolderSize = 60;
+    private byte[] activityDataHolder = new byte[activityDataHolderSize];
+    //index of the buffer above
+    private int activityDataHolderProgress = 0;
+    //number of bytes we will get in a single data transfer, used as counter
+    private int activityDataRemainingBytes = 0;
+    //same as above, but remains untouched for the ack message
+    private int activityDataUntilNextHeader = 0;
+    //timestamp of the single data transfer, incremented to store each minute's data
+    private GregorianCalendar activityDataTimestampProgress = null;
+    //same as above, but remains untouched for the ack message
+    private GregorianCalendar activityDataTimestampToAck = null;
+
 
     public MiBandSupport() {
         addSupportedService(MiBandService.UUID_SERVICE_MIBAND_SERVICE);
@@ -47,8 +68,36 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
 
     @Override
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
-        pair(builder).sendUserInfo(builder).setCurrentTime(builder).requestBatteryInfo(builder);
+        builder.add(new SetDeviceStateAction(getDevice(), State.INITIALIZING, getContext()));
+        pair(builder)
+                .sendUserInfo(builder)
+                .enableNotifications(builder, true)
+                .setCurrentTime(builder)
+                .requestBatteryInfo(builder)
+                .setInitialized(builder);
+
         return builder;
+    }
+
+    /**
+     * Last action of initialization sequence. Sets the device to initialized.
+     * It is only invoked if all other actions were successfully run, so the device
+     * must be initialized, then.
+     * @param builder
+     */
+    private void setInitialized(TransactionBuilder builder) {
+        builder.add(new SetDeviceStateAction(getDevice(), State.INITIALIZED, getContext()));
+    }
+
+    // TODO: tear down the notifications on quit
+    private MiBandSupport enableNotifications(TransactionBuilder builder, boolean enable) {
+        builder.notify(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_NOTIFICATION), enable)
+                .notify(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_REALTIME_STEPS), enable)
+                .notify(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_ACTIVITY_DATA), enable)
+                .notify(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_BATTERY), enable)
+                .notify(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_SENSOR_DATA), enable);
+
+        return this;
     }
 
     @Override
@@ -101,6 +150,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     private static final byte[] startVibrate = new byte[]{MiBandService.COMMAND_SEND_NOTIFICATION, 1};
     private static final byte[] stopVibrate = new byte[]{MiBandService.COMMAND_STOP_MOTOR_VIBRATE};
     private static final byte[] reboot = new byte[]{MiBandService.COMMAND_REBOOT};
+    private static final byte[] fetch = new byte[]{6};
 
     private byte[] getNotification(long vibrateDuration, int vibrateTimes, int flashTimes, int flashColour, int originalColour, long flashDuration) {
         byte[] vibrate = new byte[]{MiBandService.COMMAND_SEND_NOTIFICATION, (byte) 1};
@@ -247,7 +297,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
      * @param builder
      */
     private MiBandSupport setCurrentTime(TransactionBuilder builder) {
-        Calendar now = Calendar.getInstance();
+        Calendar now = GregorianCalendar.getInstance();
         byte[] time = new byte[]{
                 (byte) (now.get(Calendar.YEAR) - 2000),
                 (byte) now.get(Calendar.MONTH),
@@ -308,11 +358,11 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onReboot() {
         try {
-            TransactionBuilder builder = performInitialized("Reboot");
-            builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), reboot);
+            TransactionBuilder builder = performInitialized("fetch activity data");
+            builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), fetch);
             builder.queue(getQueue());
         } catch (IOException ex) {
-            LOG.error("Unable to reboot MI", ex);
+            LOG.error("Unable to fetch MI activity data", ex);
         }
     }
 
@@ -337,6 +387,17 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
+    public void onCharacteristicChanged(BluetoothGatt gatt,
+                                        BluetoothGattCharacteristic characteristic) {
+        super.onCharacteristicChanged(gatt, characteristic);
+
+        UUID characteristicUUID = characteristic.getUuid();
+        if (MiBandService.UUID_CHARACTERISTIC_ACTIVITY_DATA.equals(characteristicUUID)) {
+            handleActivityNotif(characteristic.getValue());
+        }
+    }
+
+    @Override
     public void onCharacteristicRead(BluetoothGatt gatt,
                                      BluetoothGattCharacteristic characteristic, int status) {
         super.onCharacteristicRead(gatt, characteristic, status);
@@ -357,6 +418,8 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
             handlePairResult(characteristic.getValue(), status);
         } else if (MiBandService.UUID_CHARACTERISTIC_USER_INFO.equals(characteristicUUID)) {
             handleUserInfoResult(characteristic.getValue(), status);
+        } else if (MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT.equals(characteristicUUID)) {
+            handleControlPointResult(characteristic.getValue(), status);
         }
     }
 
@@ -365,6 +428,131 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
             DeviceInfo info = new DeviceInfo(value);
             getDevice().setFirmwareVersion(info.getFirmwareVersion());
             getDevice().sendDeviceUpdateIntent(getContext());
+        }
+    }
+
+    private void handleActivityNotif(byte[] value) {
+        LOG.info("handleActivityNotif GOT " + value.length + " BYTES.");
+        if (value.length == 11 ) {
+            // byte 0 is the data type: 1 means that each minute is represented by a triplet of bytes
+            int dataType = value[0];
+            // byte 1 to 6 represent a timestamp
+            GregorianCalendar timestamp = new GregorianCalendar(value[1]+2000,
+                    value[2],
+                    value[3],
+                    value[4],
+                    value[5],
+                    value[6]);
+
+            // counter of all data held by the band
+            int totalDataToRead = (value[7] & 0xff) | ((value[8] & 0xff) << 8);
+            totalDataToRead *= (dataType == 1) ? 3 : 1;
+
+
+            // counter of this data block
+            int dataUntilNextHeader = (value[9] & 0xff) | ((value[10] & 0xff) << 8);
+            dataUntilNextHeader *= (dataType ==1) ? 3 : 1;
+
+            // there is a total of totalDataToRead that will come in chunks (3 bytes per minute if dataType == 1),
+            // these chunks are usually 20 bytes long and grouped in blocks
+            // after dataUntilNextHeader bytes we will get a new packet of 11 bytes that should be parsed
+            // as we just did
+
+            LOG.info("total data to read: "+  totalDataToRead   +" len: " + (totalDataToRead / 3) + " minute(s)");
+            LOG.info("data to read until next header: "+  dataUntilNextHeader   +" len: " + (dataUntilNextHeader / 3) + " minute(s)");
+            LOG.info("TIMESTAMP: " + DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() + " magic byte: " + dataUntilNextHeader);
+
+            this.activityDataRemainingBytes = this.activityDataUntilNextHeader = dataUntilNextHeader;
+            this.activityDataTimestampProgress = this.activityDataTimestampToAck = timestamp;
+
+        } else {
+            bufferActivityData(value);
+        }
+        if (this.activityDataRemainingBytes == 0) {
+            sendAckDataTransfer(this.activityDataTimestampToAck, this.activityDataUntilNextHeader);
+            flushActivityDataHolder();
+        }
+    }
+
+    private void bufferActivityData(byte[] value) {
+
+        if (this.activityDataRemainingBytes >= value.length) {
+            //I don't like this clause, but until we figure out why we get different data sometimes this should work
+            if (value.length == 20 || value.length == this.activityDataRemainingBytes) {
+                System.arraycopy(value, 0, this.activityDataHolder, this.activityDataHolderProgress, value.length);
+                this.activityDataHolderProgress +=value.length;
+                this.activityDataRemainingBytes -= value.length;
+
+                if (this.activityDataHolderSize == this.activityDataHolderProgress) {
+                    flushActivityDataHolder();
+                }
+            } else {
+                // the lenght of the chunk is not what we expect. We need to make sense of this data
+                LOG.warn("GOT UNEXPECTED ACTIVITY DATA WITH LENGTH: " + value.length + ", EXPECTED LENGTH: " + this.activityDataRemainingBytes);
+                for (byte b: value){
+                    LOG.warn("DATA: " + String.format("0x%8x", b));
+                }
+            }
+        }
+    }
+
+    private void flushActivityDataHolder() {
+        GregorianCalendar timestamp = this.activityDataTimestampProgress;
+        byte category, intensity, steps;
+
+        for (int i=0; i<this.activityDataHolder.length; i+=3) {
+            category = this.activityDataHolder[i];
+            intensity = this.activityDataHolder[i+1];
+            steps = this.activityDataHolder[i+2];
+
+            GBApplication.getActivityDatabaseHandler().addGBActivitySample(
+                    (int) (timestamp.getTimeInMillis() / 1000),
+                    GBActivitySample.PROVIDER_MIBAND,
+                    intensity,
+                    steps,
+                    category);
+
+            ACTIVITYLOG.info(
+                    " timestamp:"+DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() +
+                            " category:"+ category+
+                            " intensity:"+intensity+
+                            " steps:"+steps
+            );
+            timestamp.add(Calendar.MINUTE, 1);
+        }
+
+        this.activityDataHolderProgress = 0;
+        this.activityDataTimestampProgress = timestamp;
+    }
+
+    private void handleControlPointResult(byte[] value, int status) {
+        if (status != BluetoothGatt.GATT_SUCCESS) {
+            LOG.warn("Could not write to the control point.");
+        }
+        LOG.info("handleControlPoint got status:" + status);
+        for (byte b: value){
+            LOG.info("handleControlPoint GOT DATA:" + String.format("0x%8x", b));
+        }
+
+    }
+    private void sendAckDataTransfer(Calendar time, int bytesTransferred) {
+        byte[] ack = new byte[]{
+                MiBandService.COMMAND_CONFIRM_ACTIVITY_DATA_TRANSFER_COMPLETE,
+                (byte) (time.get(Calendar.YEAR) - 2000),
+                (byte) time.get(Calendar.MONTH),
+                (byte) time.get(Calendar.DATE),
+                (byte) time.get(Calendar.HOUR_OF_DAY),
+                (byte) time.get(Calendar.MINUTE),
+                (byte) time.get(Calendar.SECOND),
+                (byte) (bytesTransferred & 0xff),
+                (byte) (0xff & (bytesTransferred >> 8))
+        };
+        try {
+            TransactionBuilder builder = performInitialized("send acknowledge");
+            builder.write(getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT), ack);
+            builder.queue(getQueue());
+        } catch (IOException ex) {
+            LOG.error("Unable to send ack to MI", ex);
         }
     }
 
@@ -411,5 +599,10 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
             value = Arrays.toString(pairResult);
         }
         LOG.info("MI Band pairing result: " + value);
+    }
+
+    @Override
+    protected TransactionBuilder createTransactionBuilder(String taskName) {
+        return new MiBandTransactionBuilder(taskName);
     }
 }

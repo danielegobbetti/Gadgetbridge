@@ -11,6 +11,7 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
 import android.support.v4.content.LocalBroadcastManager;
+import android.view.ContextMenu;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -18,6 +19,9 @@ import android.widget.AdapterView;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +33,7 @@ import nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst;
 
 public class ControlCenter extends Activity {
 
+    private static final Logger LOG = LoggerFactory.getLogger(ControlCenter.class);
 
     public static final String ACTION_QUIT
             = "nodomain.freeyourgadget.gadgetbride.controlcenter.action.quit";
@@ -39,6 +44,8 @@ public class ControlCenter extends Activity {
     TextView hintTextView;
     ListView deviceListView;
     GBDeviceAdapter mGBDeviceAdapter;
+    private GBDevice selectedDevice = null;
+
     final List<GBDevice> deviceList = new ArrayList<>();
 
     private BroadcastReceiver mReceiver = new BroadcastReceiver() {
@@ -54,7 +61,7 @@ public class ControlCenter extends Activity {
                     refreshPairedDevices();
                     break;
                 case GBDevice.ACTION_DEVICE_CHANGED:
-                    GBDevice dev = intent.getParcelableExtra("device");
+                    GBDevice dev = intent.getParcelableExtra(GBDevice.EXTRA_DEVICE);
                     if (dev.getAddress() != null) {
                         int index = deviceList.indexOf(dev); // search by address
                         if (index >= 0) {
@@ -65,7 +72,8 @@ public class ControlCenter extends Activity {
                     }
                     refreshPairedDevices();
 
-                    if (dev.isConnected() && dev.getFirmwareVersion() == null) {
+                    if (dev.isConnected() && dev.getFirmwareVersion() == null && !dev.isInitializing()) {
+                        LOG.info("device connected, requesting more info");
                         requestDeviceInfo();
                     }
                     break;
@@ -95,6 +103,8 @@ public class ControlCenter extends Activity {
                 }
             }
         });
+
+        registerForContextMenu(deviceListView);
 
         IntentFilter filterLocal = new IntentFilter();
         filterLocal.addAction(ACTION_QUIT);
@@ -139,6 +149,33 @@ public class ControlCenter extends Activity {
         versionInfoIntent.setAction(BluetoothCommunicationService.ACTION_REQUEST_VERSIONINFO);
         startService(versionInfoIntent);
     }
+
+
+    @Override
+    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
+        super.onCreateContextMenu(menu, v, menuInfo);
+        getMenuInflater().inflate(
+                R.menu.controlcenter_context, menu);
+        AdapterView.AdapterContextMenuInfo acmi = (AdapterView.AdapterContextMenuInfo) menuInfo;
+        selectedDevice = deviceList.get(acmi.position);
+        menu.setHeaderTitle(selectedDevice.getName());
+    }
+
+    @Override
+    public boolean onContextItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.controlcenter_start_sleepmonitor:
+                if (selectedDevice != null) {
+                    Intent startIntent = new Intent(ControlCenter.this, SleepMonitorActivity.class);
+                    startIntent.putExtra("device", selectedDevice);
+                    startActivity(startIntent);
+                }
+                return true;
+            default:
+                return super.onContextItemSelected(item);
+        }
+    }
+
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
