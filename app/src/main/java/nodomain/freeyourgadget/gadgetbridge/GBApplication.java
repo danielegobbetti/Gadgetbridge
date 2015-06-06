@@ -3,6 +3,8 @@ package nodomain.freeyourgadget.gadgetbridge;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.Build.VERSION;
 import android.preference.PreferenceManager;
 
 import org.slf4j.Logger;
@@ -31,6 +33,10 @@ public class GBApplication extends Application {
 //         print logback's internal status
 //        StatusPrinter.print(lc);
 //        Logger logger = LoggerFactory.getLogger(GBApplication.class);
+
+// for testing DB stuff
+//        SQLiteDatabase db = mActivityDatabaseHandler.getWritableDatabase();
+//        db.close();
     }
 
     public static boolean isFileLoggingEnabled() {
@@ -62,5 +68,9 @@ public class GBApplication extends Application {
 
     public static ActivityDatabaseHandler getActivityDatabaseHandler() {
         return mActivityDatabaseHandler;
+    }
+
+    public static boolean isRunningLollipopOrLater() {
+        return VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
     }
 }
