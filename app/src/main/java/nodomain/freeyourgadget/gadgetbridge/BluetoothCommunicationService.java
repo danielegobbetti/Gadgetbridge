@@ -25,7 +25,6 @@ import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBDevice.State;
 import nodomain.freeyourgadget.gadgetbridge.miband.MiBandSupport;
-import nodomain.freeyourgadget.gadgetbridge.pebble.PebbleIoThread;
 import nodomain.freeyourgadget.gadgetbridge.pebble.PebbleSupport;
 
 public class BluetoothCommunicationService extends Service {
@@ -58,11 +57,13 @@ public class BluetoothCommunicationService extends Service {
     public static final String ACTION_INSTALL_PEBBLEAPP
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.install_pebbbleapp";
     public static final String ACTION_REBOOT = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.reboot";
+    public static final String ACTION_FETCH_ACTIVITY_DATA = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.fetch_activity_data";
+    public static final String ACTION_DISCONNECT = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.disconnect";
+
     public static final String EXTRA_PERFORM_PAIR = "perform_pair";
 
     private static final Logger LOG = LoggerFactory.getLogger(BluetoothCommunicationService.class);
     public static final String EXTRA_DEVICE_ADDRESS = "device_address";
-    private GBDeviceIoThread mGBDeviceIoThread = null;
 
     private boolean mStarted = false;
 
@@ -77,7 +78,8 @@ public class BluetoothCommunicationService extends Service {
                 GBDevice device = intent.getParcelableExtra("device");
                 if (mGBDevice.equals(device)) {
                     mGBDevice = device;
-                    GB.setReceiversEnableState(mDeviceSupport.useAutoConnect() || mGBDevice.isConnected(), context);
+                    boolean enableReceivers = mDeviceSupport != null && (mDeviceSupport.useAutoConnect() || mGBDevice.isConnected());
+                    GB.setReceiversEnableState(enableReceivers, context);
                     GB.updateNotification(mGBDevice.getName() + " " + mGBDevice.getStateString(), context);
                 }
             }
@@ -153,10 +155,10 @@ public class BluetoothCommunicationService extends Service {
                             BluetoothDevice btDevice = mBtAdapter.getRemoteDevice(btDeviceAddress);
                             if (btDevice.getName() == null || btDevice.getName().equals("MI")) { //FIXME: workaround for Miband not being paired
                                 mGBDevice = new GBDevice(btDeviceAddress, "MI", DeviceType.MIBAND);
-                                mDeviceSupport = new MiBandSupport();
+                                mDeviceSupport = new ServiceDeviceSupport(new MiBandSupport());
                             } else if (btDevice.getName().indexOf("Pebble") == 0) {
                                 mGBDevice = new GBDevice(btDeviceAddress, btDevice.getName(), DeviceType.PEBBLE);
-                                mDeviceSupport = new PebbleSupport();
+                                mDeviceSupport = new ServiceDeviceSupport(new PebbleSupport());
                             }
                             if (mDeviceSupport != null) {
                                 mDeviceSupport.initialize(mGBDevice, mBtAdapter, this);
@@ -164,9 +166,6 @@ public class BluetoothCommunicationService extends Service {
                                     mDeviceSupport.pair();
                                 } else {
                                     mDeviceSupport.connect();
-                                }
-                                if (mDeviceSupport instanceof AbstractBTDeviceSupport) {
-                                    mGBDeviceIoThread = ((AbstractBTDeviceSupport) mDeviceSupport).getDeviceIOThread();
                                 }
                             }
                         } catch (Exception e) {
@@ -198,6 +197,15 @@ public class BluetoothCommunicationService extends Service {
             }
             case ACTION_REBOOT: {
                 mDeviceSupport.onReboot();
+                break;
+            }
+            case ACTION_FETCH_ACTIVITY_DATA: {
+                mDeviceSupport.onFetchActivityData();
+                break;
+            }
+            case ACTION_DISCONNECT: {
+                mDeviceSupport.dispose();
+                mDeviceSupport = null;
                 break;
             }
             case ACTION_CALLSTATE:
@@ -241,7 +249,7 @@ public class BluetoothCommunicationService extends Service {
                 String uriString = intent.getStringExtra("app_uri");
                 if (uriString != null) {
                     LOG.info("will try to install app");
-                    ((PebbleIoThread) mGBDeviceIoThread).installApp(Uri.parse(uriString));
+                    mDeviceSupport.onInstallApp(Uri.parse(uriString));
                 }
                 break;
             case ACTION_START:

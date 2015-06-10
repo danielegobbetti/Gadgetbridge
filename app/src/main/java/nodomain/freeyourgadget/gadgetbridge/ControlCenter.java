@@ -72,6 +72,8 @@ public class ControlCenter extends Activity {
                     }
                     refreshPairedDevices();
 
+                    refreshBusyState(dev);
+
                     if (dev.isConnected() && dev.getFirmwareVersion() == null && !dev.isInitializing()) {
                         LOG.info("device connected, requesting more info");
                         requestDeviceInfo();
@@ -80,6 +82,10 @@ public class ControlCenter extends Activity {
             }
         }
     };
+
+    private void refreshBusyState(GBDevice dev) {
+        mGBDeviceAdapter.notifyDataSetChanged();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -154,10 +160,14 @@ public class ControlCenter extends Activity {
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
         super.onCreateContextMenu(menu, v, menuInfo);
-        getMenuInflater().inflate(
-                R.menu.controlcenter_context, menu);
         AdapterView.AdapterContextMenuInfo acmi = (AdapterView.AdapterContextMenuInfo) menuInfo;
         selectedDevice = deviceList.get(acmi.position);
+        if (selectedDevice != null && selectedDevice.isBusy()) {
+            // no context menu when device is busy
+            return;
+        }
+        getMenuInflater().inflate(
+                R.menu.controlcenter_context, menu);
         menu.setHeaderTitle(selectedDevice.getName());
     }
 
@@ -167,8 +177,24 @@ public class ControlCenter extends Activity {
             case R.id.controlcenter_start_sleepmonitor:
                 if (selectedDevice != null) {
                     Intent startIntent = new Intent(ControlCenter.this, SleepMonitorActivity.class);
+//                    Intent startIntent = new Intent(ControlCenter.this, AbstractChartActivity.class);
                     startIntent.putExtra("device", selectedDevice);
                     startActivity(startIntent);
+                }
+                return true;
+            case R.id.controlcenter_fetch_activity_data:
+                if (selectedDevice != null) {
+                    Intent startIntent = new Intent(this, BluetoothCommunicationService.class);
+                    startIntent.setAction(BluetoothCommunicationService.ACTION_FETCH_ACTIVITY_DATA);
+                    startService(startIntent);
+                }
+                return true;
+            case R.id.controlcenter_disconnect:
+                if (selectedDevice != null) {
+                    selectedDevice = null;
+                    Intent startIntent = new Intent(this, BluetoothCommunicationService.class);
+                    startIntent.setAction(BluetoothCommunicationService.ACTION_DISCONNECT);
+                    startService(startIntent);
                 }
                 return true;
             default:

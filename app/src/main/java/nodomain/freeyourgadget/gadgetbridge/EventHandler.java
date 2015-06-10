@@ -1,5 +1,8 @@
 package nodomain.freeyourgadget.gadgetbridge;
 
+import android.net.Uri;
+
+import java.net.URI;
 import java.util.UUID;
 
 public interface EventHandler {
@@ -19,6 +22,8 @@ public interface EventHandler {
 
     void onBatteryInfoReq();
 
+    void onInstallApp(Uri uri);
+
     void onAppInfoReq();
 
     void onAppStart(UUID uuid);
@@ -27,8 +32,7 @@ public interface EventHandler {
 
     void onPhoneVersion(byte os);
 
-    void onSynchronizeActivityData();
+    void onFetchActivityData();
 
     void onReboot();
-
 }

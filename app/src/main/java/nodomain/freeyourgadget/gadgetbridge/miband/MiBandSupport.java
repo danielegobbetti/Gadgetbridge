@@ -3,18 +3,19 @@ package nodomain.freeyourgadget.gadgetbridge.miband;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
 import android.content.SharedPreferences;
+import android.database.sqlite.SQLiteDatabase;
+import android.net.Uri;
 import android.preference.PreferenceManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.text.DateFormat;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.GregorianCalendar;
 import java.util.UUID;
-
-import java.text.DateFormat;
 
 import nodomain.freeyourgadget.gadgetbridge.GBActivitySample;
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
@@ -24,6 +25,7 @@ import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.btle.AbstractBTLEDeviceSupport;
 import nodomain.freeyourgadget.gadgetbridge.btle.SetDeviceBusyAction;
 import nodomain.freeyourgadget.gadgetbridge.btle.TransactionBuilder;
+import nodomain.freeyourgadget.gadgetbridge.database.ActivityDatabaseHandler;
 
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_FLASH_COLOUR;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_FLASH_COUNT;
@@ -369,7 +371,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
-    public void onSynchronizeActivityData() {
+    public void onFetchActivityData() {
         try {
             TransactionBuilder builder = performInitialized("fetch activity data");
             builder.add(new SetDeviceBusyAction(getDevice(), getContext().getString(R.string.busy_task_fetch_activity_data), getContext()));
@@ -378,6 +380,11 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         } catch (IOException ex) {
             LOG.error("Unable to fetch MI activity data", ex);
         }
+    }
+
+    @Override
+    public void onInstallApp(Uri uri) {
+        // not supported
     }
 
     @Override
@@ -516,25 +523,28 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         GregorianCalendar timestamp = this.activityDataTimestampProgress;
         byte category, intensity, steps;
 
-        for (int i=0; i<this.activityDataHolderProgress; i+=3) { //TODO: check if multiple of 3, if not something is wrong
-            category = this.activityDataHolder[i];
-            intensity = this.activityDataHolder[i+1];
-            steps = this.activityDataHolder[i+2];
+        ActivityDatabaseHandler dbHandler = GBApplication.getActivityDatabaseHandler();
+        try (SQLiteDatabase db = dbHandler.getWritableDatabase()) { // explicitly keep the db open while looping over the samples
+            for (int i=0; i<this.activityDataHolderProgress; i+=3) { //TODO: check if multiple of 3, if not something is wrong
+                category = this.activityDataHolder[i];
+                intensity = this.activityDataHolder[i+1];
+                steps = this.activityDataHolder[i+2];
 
-            GBApplication.getActivityDatabaseHandler().addGBActivitySample(
-                    (int) (timestamp.getTimeInMillis() / 1000),
-                    GBActivitySample.PROVIDER_MIBAND,
-                    intensity,
-                    steps,
-                    category);
+                dbHandler.addGBActivitySample(
+                        (int) (timestamp.getTimeInMillis() / 1000),
+                        GBActivitySample.PROVIDER_MIBAND,
+                        intensity,
+                        steps,
+                        category);
 
-            ACTIVITYLOG.info(
-                    " timestamp:"+DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() +
-                            " category:"+ category+
-                            " intensity:"+intensity+
-                            " steps:"+steps
-            );
-            timestamp.add(Calendar.MINUTE, 1);
+                ACTIVITYLOG.info(
+                        " timestamp:"+DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() +
+                                " category:"+ category+
+                                " intensity:"+intensity+
+                                " steps:"+steps
+                );
+                timestamp.add(Calendar.MINUTE, 1);
+            }
         }
 
         this.activityDataHolderProgress = 0;
