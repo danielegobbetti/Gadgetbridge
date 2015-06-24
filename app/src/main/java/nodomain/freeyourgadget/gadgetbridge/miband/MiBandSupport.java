@@ -22,7 +22,9 @@ import nodomain.freeyourgadget.gadgetbridge.GBApplication;
 import nodomain.freeyourgadget.gadgetbridge.GBCommand;
 import nodomain.freeyourgadget.gadgetbridge.GBDevice.State;
 import nodomain.freeyourgadget.gadgetbridge.R;
+import nodomain.freeyourgadget.gadgetbridge.btle.AbortTransactionAction;
 import nodomain.freeyourgadget.gadgetbridge.btle.AbstractBTLEDeviceSupport;
+import nodomain.freeyourgadget.gadgetbridge.btle.BtLEAction;
 import nodomain.freeyourgadget.gadgetbridge.btle.SetDeviceBusyAction;
 import nodomain.freeyourgadget.gadgetbridge.btle.TransactionBuilder;
 import nodomain.freeyourgadget.gadgetbridge.database.ActivityDatabaseHandler;
@@ -34,6 +36,7 @@ import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VA
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_VIBRATION_COUNT;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_VIBRATION_DURATION;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_VIBRATION_PAUSE;
+import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.DEFAULT_VALUE_VIBRATION_PROFILE;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.FLASH_COLOUR;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.FLASH_COUNT;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.FLASH_DURATION;
@@ -44,12 +47,13 @@ import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.ORIGIN_SMS
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.VIBRATION_COUNT;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.VIBRATION_DURATION;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.VIBRATION_PAUSE;
+import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.VIBRATION_PROFILE;
 import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.getNotificationPrefIntValue;
+import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.getNotificationPrefStringValue;
 
 public class MiBandSupport extends AbstractBTLEDeviceSupport {
 
     private static final Logger LOG = LoggerFactory.getLogger(MiBandSupport.class);
-    private static final Logger ACTIVITYLOG = LoggerFactory.getLogger("activity");
 
     //temporary buffer, size is a multiple of 60 because we want to store complete minutes (1 minute = 3 bytes)
     private static final int activityDataHolderSize = 60 * 24; // 8h
@@ -64,6 +68,8 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     private GregorianCalendar activityDataTimestampProgress = null;
     //same as above, but remains untouched for the ack message
     private GregorianCalendar activityDataTimestampToAck = null;
+    private volatile boolean telephoneRinging;
+    private volatile boolean isLocatingDevice;
 
 
     public MiBandSupport() {
@@ -87,6 +93,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
      * Last action of initialization sequence. Sets the device to initialized.
      * It is only invoked if all other actions were successfully run, so the device
      * must be initialized, then.
+     *
      * @param builder
      */
     private void setInitialized(TransactionBuilder builder) {
@@ -129,10 +136,51 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         return getNotification(vibrateDuration, vibrateTimes, flashTimes, flashColour, originalColour, flashDuration);
     }
 
-    private void sendDefaultNotification(TransactionBuilder builder) {
+    private void sendDefaultNotification(TransactionBuilder builder, short repeat, BtLEAction extraAction) {
         BluetoothGattCharacteristic characteristic = getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT);
-        LOG.info("Sending notification to MiBand: " + characteristic);
-        builder.write(characteristic, getDefaultNotification()).queue(getQueue());
+        LOG.info("Sending notification to MiBand: " + characteristic + " (" + repeat + " times)");
+        byte[] defaultNotification = getDefaultNotification();
+        for (short i = 0; i < repeat; i++) {
+            builder.write(characteristic, defaultNotification);
+            builder.add(extraAction);
+        }
+        builder.queue(getQueue());
+    }
+
+    /**
+     * Sends a custom notification to the Mi Band.
+     * @param vibrationProfile specifies how and how often the Band shall vibrate.
+     * @param flashTimes
+     * @param flashColour
+     * @param originalColour
+     * @param flashDuration
+     * @param extraAction an extra action to be executed after every vibration and flash sequence. Allows to abort the repetition, for example.
+     * @param builder
+     */
+    private void sendCustomNotification(VibrationProfile vibrationProfile, int flashTimes, int flashColour, int originalColour, long flashDuration, BtLEAction extraAction, TransactionBuilder builder) {
+        BluetoothGattCharacteristic controlPoint = getCharacteristic(MiBandService.UUID_CHARACTERISTIC_CONTROL_POINT);
+        for (short i = 0; i < vibrationProfile.getRepeat(); i++) {
+            int[] onOffSequence = vibrationProfile.getOnOffSequence();
+            for (int j = 0; j < onOffSequence.length; j++) {
+                int on = onOffSequence[j];
+                on = Math.min(500, on); // longer than 500ms is not possible
+                builder.write(controlPoint, startVibrate);
+                builder.wait(on);
+                builder.write(controlPoint, stopVibrate);
+
+                if (++j < onOffSequence.length) {
+                    int off = Math.max(onOffSequence[j], 25); // wait at least 25ms
+                    builder.wait(off);
+                }
+
+                if (extraAction != null) {
+                    builder.add(extraAction);
+                }
+            }
+        }
+
+        LOG.info("Sending notification to MiBand: " + controlPoint);
+        builder.queue(getQueue());
     }
 
     private void sendCustomNotification(int vibrateDuration, int vibrateTimes, int pause, int flashTimes, int flashColour, int originalColour, long flashDuration, TransactionBuilder builder) {
@@ -151,10 +199,10 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         builder.queue(getQueue());
     }
 
-    private static final byte[] startVibrate = new byte[] { MiBandService.COMMAND_SEND_NOTIFICATION, 1 };
-    private static final byte[] stopVibrate = new byte[] { MiBandService.COMMAND_STOP_MOTOR_VIBRATE };
-    private static final byte[] reboot = new byte[]{ MiBandService.COMMAND_REBOOT };
-    private static final byte[] fetch = new byte[]{ MiBandService.COMMAND_FETCH_DATA };
+    private static final byte[] startVibrate = new byte[]{MiBandService.COMMAND_SEND_NOTIFICATION, 1};
+    private static final byte[] stopVibrate = new byte[]{MiBandService.COMMAND_STOP_MOTOR_VIBRATE};
+    private static final byte[] reboot = new byte[]{MiBandService.COMMAND_REBOOT};
+    private static final byte[] fetch = new byte[]{MiBandService.COMMAND_FETCH_DATA};
 
     private byte[] getNotification(long vibrateDuration, int vibrateTimes, int flashTimes, int flashColour, int originalColour, long flashDuration) {
         byte[] vibrate = new byte[]{MiBandService.COMMAND_SEND_NOTIFICATION, (byte) 1};
@@ -203,10 +251,10 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         return this;
     }
 
-    private void performDefaultNotification(String task) {
+    private void performDefaultNotification(String task, short repeat, BtLEAction extraAction) {
         try {
             TransactionBuilder builder = performInitialized(task);
-            sendDefaultNotification(builder);
+            sendDefaultNotification(builder, repeat, extraAction);
         } catch (IOException ex) {
             LOG.error("Unable to send notification to MI device", ex);
         }
@@ -221,20 +269,22 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
 //        }
 //    }
 
-    private void performPreferredNotification(String task, String notificationOrigin) {
+    private void performPreferredNotification(String task, String notificationOrigin, BtLEAction extraAction) {
         try {
             TransactionBuilder builder = performInitialized(task);
             SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getContext());
             int vibrateDuration = getPreferredVibrateDuration(notificationOrigin, prefs);
-            int vibrateTimes = getPreferredVibrateCount(notificationOrigin, prefs);
             int vibratePause = getPreferredVibratePause(notificationOrigin, prefs);
+            int vibrateTimes = getPreferredVibrateCount(notificationOrigin, prefs);
+            VibrationProfile profile = getPreferredVibrateProfile(notificationOrigin, prefs, vibrateTimes);
 
             int flashTimes = getPreferredFlashCount(notificationOrigin, prefs);
             int flashColour = getPreferredFlashColour(notificationOrigin, prefs);
             int originalColour = getPreferredOriginalColour(notificationOrigin, prefs);
             int flashDuration = getPreferredFlashDuration(notificationOrigin, prefs);
 
-            sendCustomNotification(vibrateDuration, vibrateTimes, vibratePause, flashTimes, flashColour, originalColour, flashDuration, builder);
+            sendCustomNotification(profile, flashTimes, flashColour, originalColour, flashDuration, extraAction, builder);
+//            sendCustomNotification(vibrateDuration, vibrateTimes, vibratePause, flashTimes, flashColour, originalColour, flashDuration, builder);
         } catch (IOException ex) {
             LOG.error("Unable to send notification to MI device", ex);
         }
@@ -268,20 +318,24 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         return getNotificationPrefIntValue(VIBRATION_DURATION, notificationOrigin, prefs, DEFAULT_VALUE_VIBRATION_DURATION);
     }
 
+    private VibrationProfile getPreferredVibrateProfile(String notificationOrigin, SharedPreferences prefs, int repeat) {
+        String profileId = getNotificationPrefStringValue(VIBRATION_PROFILE, notificationOrigin, prefs, DEFAULT_VALUE_VIBRATION_PROFILE);
+        return VibrationProfile.getProfile(profileId, (byte) (repeat & 0xfff));
+    }
+
     @Override
     public void onSMS(String from, String body) {
-//        performCustomNotification("sms received", 500, 3, 2000, 0, 0, 0, 0);
-        performPreferredNotification("sms received", ORIGIN_SMS);
+        performPreferredNotification("sms received", ORIGIN_SMS, null);
     }
 
     @Override
     public void onEmail(String from, String subject, String body) {
-        performPreferredNotification("email received", ORIGIN_K9MAIL);
+        performPreferredNotification("email received", ORIGIN_K9MAIL, null);
     }
 
     @Override
     public void onGenericNotification(String title, String details) {
-        performPreferredNotification("generic notification received", ORIGIN_GENERIC);
+        performPreferredNotification("generic notification received", ORIGIN_GENERIC, null);
     }
 
     @Override
@@ -328,8 +382,22 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     @Override
     public void onSetCallState(String number, String name, GBCommand command) {
         if (GBCommand.CALL_INCOMING.equals(command)) {
-            performDefaultNotification("incoming call");
+            telephoneRinging = true;
+            AbortTransactionAction abortAction = new AbortTransactionAction() {
+                @Override
+                protected boolean shouldAbort() {
+                    return !isTelephoneRinging();
+                }
+            };
+            performPreferredNotification("incoming call", MiBandConst.ORIGIN_INCOMING_CALL, abortAction);
+        } else if (GBCommand.CALL_START.equals(command) || GBCommand.CALL_END.equals(command)) {
+            telephoneRinging = false;
         }
+    }
+
+    private boolean isTelephoneRinging() {
+        // don't synchronize, this is not really important
+        return telephoneRinging;
     }
 
     @Override
@@ -371,6 +439,21 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
+    public void onFindDevice(boolean start) {
+        isLocatingDevice = start;
+
+        if (start) {
+            AbortTransactionAction abortAction = new AbortTransactionAction() {
+                @Override
+                protected boolean shouldAbort() {
+                    return !isLocatingDevice;
+                }
+            };
+            performDefaultNotification("locating device", (short) 255, abortAction);
+        }
+    }
+
+    @Override
     public void onFetchActivityData() {
         try {
             TransactionBuilder builder = performInitialized("fetch activity data");
@@ -408,6 +491,11 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     }
 
     @Override
+    public void onScreenshotReq() {
+        // not supported
+    }
+
+    @Override
     public void onCharacteristicChanged(BluetoothGatt gatt,
                                         BluetoothGattCharacteristic characteristic) {
         super.onCharacteristicChanged(gatt, characteristic);
@@ -415,6 +503,10 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
         UUID characteristicUUID = characteristic.getUuid();
         if (MiBandService.UUID_CHARACTERISTIC_ACTIVITY_DATA.equals(characteristicUUID)) {
             handleActivityNotif(characteristic.getValue());
+        } else if (MiBandService.UUID_CHARACTERISTIC_BATTERY.equals(characteristicUUID)) {
+            handleBatteryInfo(characteristic.getValue(), BluetoothGatt.GATT_SUCCESS);
+        } else if (MiBandService.UUID_CHARACTERISTIC_NOTIFICATION.equals(characteristicUUID)) {
+            // device somehow changed, should we update e.g. battery level?
         }
     }
 
@@ -453,12 +545,11 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     }
 
     private void handleActivityNotif(byte[] value) {
-        LOG.info("handleActivityNotif GOT " + value.length + " BYTES.");
-        if (value.length == 11 ) {
+        if (value.length == 11) {
             // byte 0 is the data type: 1 means that each minute is represented by a triplet of bytes
             int dataType = value[0];
             // byte 1 to 6 represent a timestamp
-            GregorianCalendar timestamp = new GregorianCalendar(value[1]+2000,
+            GregorianCalendar timestamp = new GregorianCalendar(value[1] + 2000,
                     value[2],
                     value[3],
                     value[4],
@@ -472,15 +563,15 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
 
             // counter of this data block
             int dataUntilNextHeader = (value[9] & 0xff) | ((value[10] & 0xff) << 8);
-            dataUntilNextHeader *= (dataType ==1) ? 3 : 1;
+            dataUntilNextHeader *= (dataType == 1) ? 3 : 1;
 
             // there is a total of totalDataToRead that will come in chunks (3 bytes per minute if dataType == 1),
             // these chunks are usually 20 bytes long and grouped in blocks
             // after dataUntilNextHeader bytes we will get a new packet of 11 bytes that should be parsed
             // as we just did
 
-            LOG.info("total data to read: "+  totalDataToRead   +" len: " + (totalDataToRead / 3) + " minute(s)");
-            LOG.info("data to read until next header: "+  dataUntilNextHeader   +" len: " + (dataUntilNextHeader / 3) + " minute(s)");
+            LOG.info("total data to read: " + totalDataToRead + " len: " + (totalDataToRead / 3) + " minute(s)");
+            LOG.info("data to read until next header: " + dataUntilNextHeader + " len: " + (dataUntilNextHeader / 3) + " minute(s)");
             LOG.info("TIMESTAMP: " + DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() + " magic byte: " + dataUntilNextHeader);
 
             if (dataUntilNextHeader > 0 ) { //tentative fix for data in the future
@@ -503,7 +594,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
             //I don't like this clause, but until we figure out why we get different data sometimes this should work
             if (value.length == 20 || value.length == this.activityDataRemainingBytes) {
                 System.arraycopy(value, 0, this.activityDataHolder, this.activityDataHolderProgress, value.length);
-                this.activityDataHolderProgress +=value.length;
+                this.activityDataHolderProgress += value.length;
                 this.activityDataRemainingBytes -= value.length;
 
                 if (this.activityDataHolderSize == this.activityDataHolderProgress) {
@@ -512,7 +603,7 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
             } else {
                 // the length of the chunk is not what we expect. We need to make sense of this data
                 LOG.warn("GOT UNEXPECTED ACTIVITY DATA WITH LENGTH: " + value.length + ", EXPECTED LENGTH: " + this.activityDataRemainingBytes);
-                for (byte b: value){
+                for (byte b : value) {
                     LOG.warn("DATA: " + String.format("0x%8x", b));
                 }
             }
@@ -525,10 +616,10 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
 
         ActivityDatabaseHandler dbHandler = GBApplication.getActivityDatabaseHandler();
         try (SQLiteDatabase db = dbHandler.getWritableDatabase()) { // explicitly keep the db open while looping over the samples
-            for (int i=0; i<this.activityDataHolderProgress; i+=3) { //TODO: check if multiple of 3, if not something is wrong
+            for (int i = 0; i < this.activityDataHolderProgress; i += 3) { //TODO: check if multiple of 3, if not something is wrong
                 category = this.activityDataHolder[i];
-                intensity = this.activityDataHolder[i+1];
-                steps = this.activityDataHolder[i+2];
+                intensity = this.activityDataHolder[i + 1];
+                steps = this.activityDataHolder[i + 2];
 
                 dbHandler.addGBActivitySample(
                         (int) (timestamp.getTimeInMillis() / 1000),
@@ -536,13 +627,6 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
                         intensity,
                         steps,
                         category);
-
-                ACTIVITYLOG.info(
-                        " timestamp:"+DateFormat.getDateTimeInstance().format(timestamp.getTime()).toString() +
-                                " category:"+ category+
-                                " intensity:"+intensity+
-                                " steps:"+steps
-                );
                 timestamp.add(Calendar.MINUTE, 1);
             }
         }
@@ -562,8 +646,12 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
                 unsetBusy();
             }
         }
-        for (byte b: value){
-            LOG.info("handleControlPoint GOT DATA:" + String.format("0x%8x", b));
+        if (value != null) {
+            for (byte b : value) {
+                LOG.info("handleControlPoint GOT DATA:" + String.format("0x%8x", b));
+            }
+        } else {
+            LOG.warn("handleControlPoint GOT null");
         }
     }
 

@@ -2,7 +2,6 @@ package nodomain.freeyourgadget.gadgetbridge;
 
 import android.net.Uri;
 
-import java.net.URI;
 import java.util.UUID;
 
 public interface EventHandler {
@@ -35,4 +34,8 @@ public interface EventHandler {
     void onFetchActivityData();
 
     void onReboot();
+
+    void onFindDevice(boolean start);
+
+    void onScreenshotReq();
 }

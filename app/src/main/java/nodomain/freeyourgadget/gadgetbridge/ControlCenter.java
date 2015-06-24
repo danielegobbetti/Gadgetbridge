@@ -1,10 +1,12 @@
 package nodomain.freeyourgadget.gadgetbridge;
 
 import android.app.Activity;
+import android.app.ProgressDialog;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+import nodomain.freeyourgadget.gadgetbridge.activities.ChartsActivity;
 import nodomain.freeyourgadget.gadgetbridge.activities.SleepChartActivity;
 import nodomain.freeyourgadget.gadgetbridge.adapter.GBDeviceAdapter;
 import nodomain.freeyourgadget.gadgetbridge.discovery.DiscoveryActivity;
@@ -167,8 +170,21 @@ public class ControlCenter extends Activity {
             // no context menu when device is busy
             return;
         }
-        getMenuInflater().inflate(
-                R.menu.controlcenter_context, menu);
+        getMenuInflater().inflate(R.menu.controlcenter_context, menu);
+
+        if (!selectedDevice.isConnected() || selectedDevice.getType() == DeviceType.PEBBLE) {
+            menu.removeItem(R.id.controlcenter_fetch_activity_data);
+        }
+
+        if (!selectedDevice.isConnected() || selectedDevice.getType() == DeviceType.MIBAND) {
+            menu.removeItem(R.id.controlcenter_take_screenshot);
+        }
+
+        if (!selectedDevice.isConnected()) {
+            menu.removeItem(R.id.controlcenter_disconnect);
+            menu.removeItem(R.id.controlcenter_find_device);
+        }
+
         menu.setHeaderTitle(selectedDevice.getName());
     }
 
@@ -177,8 +193,9 @@ public class ControlCenter extends Activity {
         switch (item.getItemId()) {
             case R.id.controlcenter_start_sleepmonitor:
                 if (selectedDevice != null) {
-//                    Intent startIntent = new Intent(ControlCenter.this, SleepMonitorActivity.class);
-                    Intent startIntent = new Intent(ControlCenter.this, SleepChartActivity.class);
+                    Intent startIntent;
+                    startIntent = new Intent(ControlCenter.this, SleepChartActivity.class);
+//                    startIntent = new Intent(ControlCenter.this, ChartsActivity.class);
                     startIntent.putExtra("device", selectedDevice);
                     startActivity(startIntent);
                 }
@@ -198,11 +215,40 @@ public class ControlCenter extends Activity {
                     startService(startIntent);
                 }
                 return true;
+            case R.id.controlcenter_find_device:
+                if (selectedDevice != null) {
+                    findDevice(true);
+                    ProgressDialog.show(
+                            this,
+                            getString(R.string.control_center_find_lost_device),
+                            getString(R.string.control_center_cancel_to_stop_vibration),
+                            true, true,
+                            new DialogInterface.OnCancelListener() {
+                                @Override
+                                public void onCancel(DialogInterface dialog) {
+                                    findDevice(false);
+                                }
+                            });
+                }
+                return true;
+            case R.id.controlcenter_take_screenshot:
+                if (selectedDevice != null) {
+                    Intent startIntent = new Intent(this, BluetoothCommunicationService.class);
+                    startIntent.setAction(BluetoothCommunicationService.ACTION_REQUEST_SCREENSHOT);
+                    startService(startIntent);
+                }
+                return true;
             default:
                 return super.onContextItemSelected(item);
         }
     }
 
+    private void findDevice(boolean start) {
+        Intent startIntent = new Intent(this, BluetoothCommunicationService.class);
+        startIntent.putExtra("find_start", start);
+        startIntent.setAction(BluetoothCommunicationService.ACTION_FIND_DEVICE);
+        startService(startIntent);
+    }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {

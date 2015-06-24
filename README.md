@@ -5,6 +5,10 @@ Gadgetbridge is an Android (4.4+) Application which will allow you to use your
 Pebble or Mi Band without the vendor's closed source application and without the
 need to create an account and transmit any of your data to the vendor's servers.
 
+## Download
+
+[![Gadgetbridge on F-Droid](/Get_it_on_F-Droid.svg.png?raw=true "Download from F-Droid")](https://f-droid.org/repository/browse/?fdid=nodomain.freeyourgadget.gadgetbridge)
+
 ## Features (Pebble)
 
 * Incoming calls notification and display (caller, phone number)
@@ -12,7 +16,7 @@ need to create an account and transmit any of your data to the vendor's servers.
 * Reject/hangup calls
 * SMS notification (sender, body)
 * K-9 Mail notification support (sender, subject, preview)
-* Support for generic notificaions (above filtered out)
+* Support for generic notifications (above filtered out)
 * Music playback info (artist, album, track). Apollo and CM 12.1 Music App supported.
 * Music control: play/pause, next track, previous track, volume up, volume down
 * List and remove installed apps/watchfaces
@@ -71,7 +75,13 @@ just leave a comment that you're working on one to avoid duplicated work.
 Translations can be contributed via https://www.transifex.com/projects/p/gadgetbridge/resource/strings/ or
 manually.
 
-## Download
+## Having problems?
 
-[![Gadgetbridge on F-Droid](/Get_it_on_F-Droid.svg.png?raw=true "Download from F-Droid")](https://f-droid.org/repository/browse/?fdid=nodomain.freeyourgadget.gadgetbridge)
+1. Open Gadgetbridge's settings and check the option to write log files
+2. Quit Gadgetbridge and restart it
+3. Reproduce the problem you encountered
+4. Check the logfile at /sdcard/Android/data/nodomain.freeyourgadget.gadgetbridge/files/gadgetbridge.log
+5. File an issue at https://github.com/Freeyourgadget/Gadgetbridge/issues/new and possibly provide the logfile
+
+Alternatively you may use the standard logcat functionality to access the log.
 

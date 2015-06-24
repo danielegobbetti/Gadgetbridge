@@ -30,8 +30,6 @@ import nodomain.freeyourgadget.gadgetbridge.pebble.PebbleSupport;
 public class BluetoothCommunicationService extends Service {
     public static final String ACTION_START
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.start";
-    public static final String ACTION_PAIR
-            = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.pair";
     public static final String ACTION_CONNECT
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.connect";
     public static final String ACTION_NOTIFICATION_GENERIC
@@ -50,6 +48,8 @@ public class BluetoothCommunicationService extends Service {
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.request_versioninfo";
     public static final String ACTION_REQUEST_APPINFO
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.request_appinfo";
+    public static final String ACTION_REQUEST_SCREENSHOT
+            = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.request_screenshot";
     public static final String ACTION_STARTAPP
             = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.startapp";
     public static final String ACTION_DELETEAPP
@@ -59,6 +59,7 @@ public class BluetoothCommunicationService extends Service {
     public static final String ACTION_REBOOT = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.reboot";
     public static final String ACTION_FETCH_ACTIVITY_DATA = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.fetch_activity_data";
     public static final String ACTION_DISCONNECT = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.disconnect";
+    public static final String ACTION_FIND_DEVICE = "nodomain.freeyourgadget.gadgetbride.bluetoothcommunicationservice.action.find_device";
 
     public static final String EXTRA_PERFORM_PAIR = "perform_pair";
 
@@ -208,6 +209,11 @@ public class BluetoothCommunicationService extends Service {
                 mDeviceSupport = null;
                 break;
             }
+            case ACTION_FIND_DEVICE: {
+                boolean start = intent.getBooleanExtra("find_start", false);
+                mDeviceSupport.onFindDevice(start);
+                break;
+            }
             case ACTION_CALLSTATE:
                 GBCommand command = GBCommand.values()[intent.getIntExtra("call_command", 0)]; // UGLY
 
@@ -236,6 +242,9 @@ public class BluetoothCommunicationService extends Service {
                 break;
             case ACTION_REQUEST_APPINFO:
                 mDeviceSupport.onAppInfoReq();
+                break;
+            case ACTION_REQUEST_SCREENSHOT:
+                mDeviceSupport.onScreenshotReq();
                 break;
             case ACTION_STARTAPP:
                 UUID uuid = UUID.fromString(intent.getStringExtra("app_uuid"));

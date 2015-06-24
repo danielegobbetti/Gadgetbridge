@@ -15,20 +15,19 @@ import java.util.UUID;
 
 import nodomain.freeyourgadget.gadgetbridge.GBCommand;
 import nodomain.freeyourgadget.gadgetbridge.GBDeviceApp;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommand;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandAppInfo;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandAppManagementResult;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandCallControl;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandMusicControl;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandSendBytes;
-import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceCommandVersionInfo;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventAppInfo;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventAppManagementResult;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCallControl;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventMusicControl;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventSendBytes;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
 import nodomain.freeyourgadget.gadgetbridge.protocol.GBDeviceProtocol;
 
 public class PebbleProtocol extends GBDeviceProtocol {
 
     private static final Logger LOG = LoggerFactory.getLogger(PebbleProtocol.class);
 
-    static final short ENDPOINT_FIRMWARE = 1;
     static final short ENDPOINT_TIME = 11;
     static final short ENDPOINT_FIRMWAREVERSION = 16;
     public static final short ENDPOINT_PHONEVERSION = 17;
@@ -52,6 +51,7 @@ public class PebbleProtocol extends GBDeviceProtocol {
     public static final short ENDPOINT_DATALOG = 6778;
     static final short ENDPOINT_RUNKEEPER = 7000;
     static final short ENDPOINT_SCREENSHOT = 8000;
+    static final short ENDPOINT_BLOBDB = (short) 45531;  // 3.x only
     static final short ENDPOINT_PUTBYTES = (short) 48879;
 
     static final byte NOTIFICATION_EMAIL = 0;
@@ -112,11 +112,13 @@ public class PebbleProtocol extends GBDeviceProtocol {
     static final byte PUTBYTES_TYPE_FILE = 6;
     public static final byte PUTBYTES_TYPE_WORKER = 7;
 
-    public static final byte RESET_REBOOT = 0;
+    static final byte RESET_REBOOT = 0;
 
-    private final byte SYSTEMMESSAGE_FIRMWARESTART = 1;
-    private final byte SYSTEMMESSAGE_FIRMWARECOMPLETE = 2;
-    private final byte SYSTEMMESSAGE_FIRMWAREFAIL = 3;
+    static final byte SCREENSHOT_TAKE = 0;
+
+    static final byte SYSTEMMESSAGE_FIRMWARESTART = 1;
+    static final byte SYSTEMMESSAGE_FIRMWARECOMPLETE = 2;
+    static final byte SYSTEMMESSAGE_FIRMWAREFAIL = 3;
 
     static final byte PHONEVERSION_REQUEST = 0;
     static final byte PHONEVERSION_APPVERSION_MAGIC = 2; // increase this if pebble complains
@@ -149,8 +151,8 @@ public class PebbleProtocol extends GBDeviceProtocol {
     static final byte TYPE_INT32 = 3;
 
     static final short LENGTH_PREFIX = 4;
+    static final short LENGTH_SIMPLEMESSAGE = 1;
     static final short LENGTH_SETTIME = 5;
-    static final short LENGTH_GETTIME = 1;
     static final short LENGTH_REMOVEAPP = 17;
     static final short LENGTH_REFRESHAPP = 5;
     static final short LENGTH_PHONEVERSION = 17;
@@ -164,12 +166,24 @@ public class PebbleProtocol extends GBDeviceProtocol {
     private static final String[] hwRevisions = {"unknown", "ev1", "ev2", "ev2_3", "ev2_4", "v1_5", "v2_0", "evt2", "dvt"};
     private static Random mRandom = new Random();
 
-    boolean isFw3x = true;
+    boolean isFw3x = false;
+    boolean mForceProtocol = false;
+
     byte last_id = -1;
     private ArrayList<UUID> tmpUUIDS = new ArrayList<>();
 
     private MorpheuzSupport mMorpheuzSupport = new MorpheuzSupport(PebbleProtocol.this);
     private WeatherNeatSupport mWeatherNeatSupport = new WeatherNeatSupport(PebbleProtocol.this);
+
+    private static byte[] encodeSimpleMessage(short endpoint, byte command) {
+        ByteBuffer buf = ByteBuffer.allocate(LENGTH_PREFIX + LENGTH_SIMPLEMESSAGE);
+        buf.order(ByteOrder.BIG_ENDIAN);
+        buf.putShort(LENGTH_SIMPLEMESSAGE);
+        buf.putShort(endpoint);
+        buf.put(command);
+
+        return buf.array();
+    }
 
     private static byte[] encodeMessage(short endpoint, byte type, int cookie, String[] parts) {
         // Calculate length first
@@ -221,8 +235,10 @@ public class PebbleProtocol extends GBDeviceProtocol {
         ts += (SimpleTimeZone.getDefault().getOffset(ts));
         ts /= 1000;
 
-
-        if (!isFw3x || true) { // remove || true if necessary on FW 3.x
+        if (isFw3x && mForceProtocol) {
+            String[] parts = {from, null, body};
+            return encodeBlobdbNotification((int) (ts & 0xffffffff), parts);
+        } else if (!isFw3x && !mForceProtocol) {
             String[] parts = {from, body, ts.toString()};
             return encodeMessage(ENDPOINT_NOTIFICATION, NOTIFICATION_SMS, 0, parts);
         }
@@ -236,10 +252,17 @@ public class PebbleProtocol extends GBDeviceProtocol {
         Long ts = System.currentTimeMillis();
         ts += (SimpleTimeZone.getDefault().getOffset(ts));
         ts /= 1000;
-        String tsstring = ts.toString(); // SIC
-        String[] parts = {from, body, tsstring, subject};
 
-        return encodeMessage(ENDPOINT_NOTIFICATION, NOTIFICATION_EMAIL, 0, parts);
+        if (isFw3x && mForceProtocol) {
+            String[] parts = {from, subject, body};
+            return encodeBlobdbNotification((int) (ts & 0xffffffff), parts);
+        } else if (!isFw3x && !mForceProtocol) {
+            String[] parts = {from, body, ts.toString(), subject};
+            return encodeMessage(ENDPOINT_NOTIFICATION, NOTIFICATION_EMAIL, 0, parts);
+        }
+
+        String[] parts = {from, subject, body};
+        return encodeExtensibleNotification(mRandom.nextInt(), (int) (ts & 0xffffffff), parts);
     }
 
     @Override
@@ -261,6 +284,11 @@ public class PebbleProtocol extends GBDeviceProtocol {
         buf.putInt((int) (ts / 1000));
 
         return buf.array();
+    }
+
+    @Override
+    public byte[] encodeFindDevice(boolean start) {
+        return encodeSetCallState("Where are you?", "Gadgetbridge", start ? GBCommand.CALL_INCOMING : GBCommand.CALL_END);
     }
 
     private static byte[] encodeExtensibleNotification(int id, int timestamp, String[] parts) {
@@ -328,14 +356,80 @@ public class PebbleProtocol extends GBDeviceProtocol {
         return buf.array();
     }
 
-    public byte[] encodeGetTime() {
-        ByteBuffer buf = ByteBuffer.allocate(LENGTH_PREFIX + LENGTH_GETTIME);
+    private static byte[] encodeBlobdbNotification(int timestamp, String[] parts) {
+        // Calculate length first
+        final short BLOBDB_LENGTH = 23;
+        final short NOTIFICATION_PIN_LENGTH = 46;
+
+        byte attributes_count = 0;
+
+        int attributes_length = 0;
+        if (parts != null) {
+            for (String s : parts) {
+                if (s == null || s.equals("")) {
+                    continue;
+                }
+                attributes_count++;
+                attributes_length += (3 + s.getBytes().length);
+            }
+        }
+
+        int length = BLOBDB_LENGTH + NOTIFICATION_PIN_LENGTH + attributes_length;
+
+        // Encode Prefix
+        ByteBuffer buf = ByteBuffer.allocate(length + LENGTH_PREFIX);
+
         buf.order(ByteOrder.BIG_ENDIAN);
-        buf.putShort(LENGTH_GETTIME);
-        buf.putShort(ENDPOINT_TIME);
-        buf.put(TIME_GETTIME);
+        buf.putShort((short) (length));
+        buf.putShort(ENDPOINT_BLOBDB);
+
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+
+        // blobdb - 23 bytes
+        buf.put((byte) 0x01); // insert
+        buf.putShort((short) mRandom.nextInt()); // token
+        buf.put((byte) 0x04); // db id (0x04 = notification)
+        buf.put((byte) 16); // uuid length
+        byte[] uuid_buf = new byte[16];
+        mRandom.nextBytes(uuid_buf);
+        buf.put(uuid_buf); // random UUID
+        buf.putShort((short) (NOTIFICATION_PIN_LENGTH + attributes_length)); // length of the encapsulated data
+
+        // pin - 46 bytes
+        buf.put(uuid_buf); // random UUID
+        Arrays.fill(uuid_buf, (byte) 0);
+        buf.put(uuid_buf); // parent UUID
+        buf.putInt(timestamp); // 32-bit timestamp
+        buf.putShort((short) 0); // duration
+        buf.put((byte) 0x01); // type (0x01 = notification)
+        buf.putShort((short) 0x0010); // flags 0x0010 = read?
+        buf.put((byte) 0x01); // layout (0x01 = default?)
+        buf.putShort((short) attributes_length); // total length of all attributes in bytes
+        buf.put(attributes_count); // count attributes
+        buf.put((byte) 0); // count actions - none so far
+
+        byte attribute_id = 0;
+        // Encode Pascal-Style Strings
+        if (parts != null) {
+            for (String s : parts) {
+                attribute_id++;
+                if (s == null || s.equals("")) {
+                    continue;
+                }
+
+                int partlength = s.getBytes().length;
+                if (partlength > 255) partlength = 255;
+                buf.put(attribute_id);
+                buf.putShort((short) partlength);
+                buf.put(s.getBytes(), 0, partlength);
+            }
+        }
 
         return buf.array();
+    }
+
+    public byte[] encodeGetTime() {
+        return encodeSimpleMessage(ENDPOINT_TIME, TIME_GETTIME);
     }
 
     @Override
@@ -380,12 +474,12 @@ public class PebbleProtocol extends GBDeviceProtocol {
 
     @Override
     public byte[] encodeFirmwareVersionReq() {
-        return encodeMessage(ENDPOINT_FIRMWAREVERSION, FIRMWAREVERSION_GETVERSION, 0, null);
+        return encodeSimpleMessage(ENDPOINT_FIRMWAREVERSION, FIRMWAREVERSION_GETVERSION);
     }
 
     @Override
     public byte[] encodeAppInfoReq() {
-        return encodeMessage(ENDPOINT_APPMANAGER, APPMANAGER_GETUUIDS, 0, null);
+        return encodeSimpleMessage(ENDPOINT_APPMANAGER, APPMANAGER_GETUUIDS);
     }
 
     @Override
@@ -434,7 +528,12 @@ public class PebbleProtocol extends GBDeviceProtocol {
 
     @Override
     public byte[] encodeReboot() {
-        return encodeMessage(ENDPOINT_RESET, RESET_REBOOT, 0, null);
+        return encodeSimpleMessage(ENDPOINT_RESET, RESET_REBOOT);
+    }
+
+    @Override
+    public byte[] encodeScreenshotReq() {
+        return encodeSimpleMessage( ENDPOINT_SCREENSHOT, SCREENSHOT_TAKE );
     }
 
     /* pebble specific install methods */
@@ -623,64 +722,64 @@ public class PebbleProtocol extends GBDeviceProtocol {
 
 
     @Override
-    public GBDeviceCommand decodeResponse(byte[] responseData) {
+    public GBDeviceEvent decodeResponse(byte[] responseData) {
         ByteBuffer buf = ByteBuffer.wrap(responseData);
         buf.order(ByteOrder.BIG_ENDIAN);
         short length = buf.getShort();
         short endpoint = buf.getShort();
         byte pebbleCmd = buf.get();
-        GBDeviceCommand cmd = null;
+        GBDeviceEvent devEvt = null;
         switch (endpoint) {
             case ENDPOINT_MUSICCONTROL:
-                GBDeviceCommandMusicControl musicCmd = new GBDeviceCommandMusicControl();
+                GBDeviceEventMusicControl musicCmd = new GBDeviceEventMusicControl();
                 switch (pebbleCmd) {
                     case MUSICCONTROL_NEXT:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.NEXT;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.NEXT;
                         break;
                     case MUSICCONTROL_PREVIOUS:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.PREVIOUS;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.PREVIOUS;
                         break;
                     case MUSICCONTROL_PLAY:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.PLAY;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.PLAY;
                         break;
                     case MUSICCONTROL_PAUSE:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.PAUSE;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.PAUSE;
                         break;
                     case MUSICCONTROL_PLAYPAUSE:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.PLAYPAUSE;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.PLAYPAUSE;
                         break;
                     case MUSICCONTROL_VOLUMEUP:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.VOLUMEUP;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.VOLUMEUP;
                         break;
                     case MUSICCONTROL_VOLUMEDOWN:
-                        musicCmd.command = GBDeviceCommandMusicControl.Command.VOLUMEDOWN;
+                        musicCmd.event = GBDeviceEventMusicControl.Event.VOLUMEDOWN;
                         break;
                     default:
                         break;
                 }
-                cmd = musicCmd;
+                devEvt = musicCmd;
                 break;
             case ENDPOINT_PHONECONTROL:
-                GBDeviceCommandCallControl callCmd = new GBDeviceCommandCallControl();
+                GBDeviceEventCallControl callCmd = new GBDeviceEventCallControl();
                 switch (pebbleCmd) {
                     case PHONECONTROL_HANGUP:
-                        callCmd.command = GBDeviceCommandCallControl.Command.END;
+                        callCmd.event = GBDeviceEventCallControl.Event.END;
                         break;
                     default:
-                        LOG.info("Unknown PHONECONTROL command" + pebbleCmd);
+                        LOG.info("Unknown PHONECONTROL event" + pebbleCmd);
                         break;
                 }
-                cmd = callCmd;
+                devEvt = callCmd;
                 break;
             case ENDPOINT_FIRMWAREVERSION:
-                GBDeviceCommandVersionInfo versionCmd = new GBDeviceCommandVersionInfo();
+                GBDeviceEventVersionInfo versionCmd = new GBDeviceEventVersionInfo();
 
                 buf.getInt(); // skip
                 byte[] tmp = new byte[32];
                 buf.get(tmp, 0, 32);
 
                 versionCmd.fwVersion = new String(tmp).trim();
-                if (versionCmd.fwVersion.startsWith("3.")) {
+                if (versionCmd.fwVersion.startsWith("v3")) {
                     isFw3x = true;
                 }
 
@@ -689,12 +788,12 @@ public class PebbleProtocol extends GBDeviceProtocol {
                 if (hwRev > 0 && hwRev < hwRevisions.length) {
                     versionCmd.hwVersion = hwRevisions[hwRev];
                 }
-                cmd = versionCmd;
+                devEvt = versionCmd;
                 break;
             case ENDPOINT_APPMANAGER:
                 switch (pebbleCmd) {
                     case APPMANAGER_GETAPPBANKSTATUS:
-                        GBDeviceCommandAppInfo appInfoCmd = new GBDeviceCommandAppInfo();
+                        GBDeviceEventAppInfo appInfoCmd = new GBDeviceEventAppInfo();
                         int slotCount = buf.getInt();
                         int slotsUsed = buf.getInt();
                         byte[] appName = new byte[32];
@@ -728,12 +827,12 @@ public class PebbleProtocol extends GBDeviceProtocol {
                                 break;
                             }
                         }
-                        cmd = appInfoCmd;
+                        devEvt = appInfoCmd;
                         break;
                     case APPMANAGER_GETUUIDS:
-                        GBDeviceCommandSendBytes sendBytes = new GBDeviceCommandSendBytes();
-                        sendBytes.encodedBytes = encodeMessage(ENDPOINT_APPMANAGER, APPMANAGER_GETAPPBANKSTATUS, 0, null);
-                        cmd = sendBytes;
+                        GBDeviceEventSendBytes sendBytes = new GBDeviceEventSendBytes();
+                        sendBytes.encodedBytes = encodeSimpleMessage(ENDPOINT_APPMANAGER, APPMANAGER_GETAPPBANKSTATUS);
+                        devEvt = sendBytes;
                         tmpUUIDS.clear();
                         slotsUsed = buf.getInt();
                         for (int i = 0; i < slotsUsed; i++) {
@@ -745,39 +844,39 @@ public class PebbleProtocol extends GBDeviceProtocol {
                         }
                         break;
                     case APPMANAGER_REMOVEAPP:
-                        GBDeviceCommandAppManagementResult deleteRes = new GBDeviceCommandAppManagementResult();
-                        deleteRes.type = GBDeviceCommandAppManagementResult.CommandType.DELETE;
+                        GBDeviceEventAppManagementResult deleteRes = new GBDeviceEventAppManagementResult();
+                        deleteRes.type = GBDeviceEventAppManagementResult.EventType.DELETE;
 
                         int result = buf.getInt();
                         switch (result) {
                             case APPMANAGER_RES_SUCCESS:
-                                deleteRes.result = GBDeviceCommandAppManagementResult.Result.SUCCESS;
+                                deleteRes.result = GBDeviceEventAppManagementResult.Result.SUCCESS;
                                 break;
                             default:
-                                deleteRes.result = GBDeviceCommandAppManagementResult.Result.FAILURE;
+                                deleteRes.result = GBDeviceEventAppManagementResult.Result.FAILURE;
                                 break;
                         }
-                        cmd = deleteRes;
+                        devEvt = deleteRes;
                         break;
                     default:
-                        LOG.info("Unknown APPMANAGER command" + pebbleCmd);
+                        LOG.info("Unknown APPMANAGER event" + pebbleCmd);
                         break;
                 }
                 break;
             case ENDPOINT_PUTBYTES:
-                GBDeviceCommandAppManagementResult installRes = new GBDeviceCommandAppManagementResult();
-                installRes.type = GBDeviceCommandAppManagementResult.CommandType.INSTALL;
+                GBDeviceEventAppManagementResult installRes = new GBDeviceEventAppManagementResult();
+                installRes.type = GBDeviceEventAppManagementResult.EventType.INSTALL;
                 switch (pebbleCmd) {
                     case PUTBYTES_INIT:
                         installRes.token = buf.getInt();
-                        installRes.result = GBDeviceCommandAppManagementResult.Result.SUCCESS;
+                        installRes.result = GBDeviceEventAppManagementResult.Result.SUCCESS;
                         break;
                     default:
                         installRes.token = buf.getInt();
-                        installRes.result = GBDeviceCommandAppManagementResult.Result.FAILURE;
+                        installRes.result = GBDeviceEventAppManagementResult.Result.FAILURE;
                         break;
                 }
-                cmd = installRes;
+                devEvt = installRes;
                 break;
             case ENDPOINT_APPLICATIONMESSAGE:
                 last_id = buf.get();
@@ -790,10 +889,10 @@ public class PebbleProtocol extends GBDeviceProtocol {
                         LOG.info("got APPLICATIONMESSAGE PUSH from UUID " + uuid);
                         if (WeatherNeatSupport.uuid.equals(uuid)) {
                             ArrayList<Pair<Integer, Object>> dict = decodeDict(buf);
-                            cmd = mWeatherNeatSupport.handleMessage(dict);
+                            devEvt = mWeatherNeatSupport.handleMessage(dict);
                         } else if (MorpheuzSupport.uuid.equals(uuid)) {
                             ArrayList<Pair<Integer, Object>> dict = decodeDict(buf);
-                            cmd = mMorpheuzSupport.handleMessage(dict);
+                            devEvt = mMorpheuzSupport.handleMessage(dict);
                         }
                         break;
                     case APPLICATIONMESSAGE_ACK:
@@ -813,9 +912,9 @@ public class PebbleProtocol extends GBDeviceProtocol {
                 if (pebbleCmd != DATALOG_TIMEOUT) {
                     byte id = buf.get();
                     LOG.info("DATALOG id " + id + " - sending 0x85 (ACK?)");
-                    GBDeviceCommandSendBytes sendBytes = new GBDeviceCommandSendBytes();
+                    GBDeviceEventSendBytes sendBytes = new GBDeviceEventSendBytes();
                     sendBytes.encodedBytes = encodeDatalog(id, (byte) 0x85);
-                    cmd = sendBytes;
+                    devEvt = sendBytes;
                 } else {
                     LOG.info("DATALOG TIMEOUT - ignoring");
                 }
@@ -824,9 +923,9 @@ public class PebbleProtocol extends GBDeviceProtocol {
                 switch (pebbleCmd) {
                     case PHONEVERSION_REQUEST:
                         LOG.info("Pebble asked for Phone/App Version - repLYING!");
-                        GBDeviceCommandSendBytes sendBytes = new GBDeviceCommandSendBytes();
+                        GBDeviceEventSendBytes sendBytes = new GBDeviceEventSendBytes();
                         sendBytes.encodedBytes = encodePhoneVersion(PHONEVERSION_REMOTE_OS_ANDROID);
-                        cmd = sendBytes;
+                        devEvt = sendBytes;
                         break;
                     default:
                         break;
@@ -836,6 +935,11 @@ public class PebbleProtocol extends GBDeviceProtocol {
                 break;
         }
 
-        return cmd;
+        return devEvt;
+    }
+
+    public void setForceProtocol(boolean force) {
+        LOG.info("setting force protocol to " + force);
+        mForceProtocol = force;
     }
 }

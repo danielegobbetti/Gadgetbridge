@@ -1,5 +1,12 @@
 ###Changelog
 
+####Version 0.4.1
+* New icons, thanks xphnx!
+* Improvements to Sleep Monitor charts
+* Pebble: use new Sleep Monitor for Morpheuz (previously Mi Band only)
+* Pebble: expermimental support for FW 3.x notification protocol
+* Pebble: dev option to force latest notification protocol
+
 ####Version 0.4.0
 * Pebble: Initial Morpheuz protocol support for getting sleep data
 * Pebble: Support launching of watchapps though the AppManager Activity
@@ -12,6 +19,7 @@
 * Support rebooting Mi Band/Pebble through the Debug Activity
 * Add highly experimental sleep monitor (accessible via long press on a device)
 * Fix Debug activity (SMS and E-Mail buttons were broken) 
+* Add Turkish translation contributed by Tarik Sekmen
 
 ####Version 0.3.5
 * Add discovery and pairing Activity for Pebble and Mi Band
