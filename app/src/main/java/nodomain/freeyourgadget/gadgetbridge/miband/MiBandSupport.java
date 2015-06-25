@@ -84,8 +84,8 @@ public class MiBandSupport extends AbstractBTLEDeviceSupport {
     protected TransactionBuilder initializeDevice(TransactionBuilder builder) {
         builder.add(new SetDeviceStateAction(getDevice(), State.INITIALIZING, getContext()));
         pair(builder)
-                .enableNotifications(builder, true)
                 .sendUserInfo(builder)
+                .enableNotifications(builder, true)
                 .setCurrentTime(builder)
                 .requestBatteryInfo(builder)
                 .setInitialized(builder);
