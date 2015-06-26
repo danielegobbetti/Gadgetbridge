@@ -8,11 +8,15 @@ import android.support.v4.content.LocalBroadcastManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 import nodomain.freeyourgadget.gadgetbridge.activities.SleepChartActivity;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEvent;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventAppInfo;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventCallControl;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventMusicControl;
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventScreenshot;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventSleepMonitorResult;
 import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInfo;
 
@@ -74,6 +78,9 @@ public abstract class AbstractDeviceSupport implements DeviceSupport {
             case SLEEP_MONITOR_RES:
                 handleGBDeviceEvent((GBDeviceEventSleepMonitorResult) deviceEvent);
                 break;
+            case SCREENSHOT:
+                handleGBDeviceEvent((GBDeviceEventScreenshot) deviceEvent);
+                break;
             default:
                 break;
         }
@@ -134,5 +141,11 @@ public abstract class AbstractDeviceSupport implements DeviceSupport {
         sleepMontiorIntent.putExtra("alarm_gone_off", sleepMonitorResult.alarm_gone_off);
 
         LocalBroadcastManager.getInstance(context).sendBroadcast(sleepMontiorIntent);
+    }
+
+    private void handleGBDeviceEvent(GBDeviceEventScreenshot screenshot) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMdd-hhmmss");
+
+        GB.writeScreenshot(screenshot, "screenshot_" + dateFormat.format(new Date()) + ".bmp");
     }
 }

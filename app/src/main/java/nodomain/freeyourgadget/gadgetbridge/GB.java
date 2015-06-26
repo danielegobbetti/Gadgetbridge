@@ -13,6 +13,14 @@ import android.support.v4.app.NotificationCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
+import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventScreenshot;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.K9Receiver;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.MusicPlaybackReceiver;
 import nodomain.freeyourgadget.gadgetbridge.externalevents.PebbleReceiver;
@@ -86,7 +94,7 @@ public class GB {
     }
 
     public static String hexdump(byte[] buffer, int offset, int length) {
-        if (length == -1 ) {
+        if (length == -1) {
             length = buffer.length;
         }
         final char[] hexArray = "0123456789ABCDEF".toCharArray();
@@ -101,5 +109,62 @@ public class GB {
 
     public static String formatRssi(short rssi) {
         return String.valueOf(rssi);
+    }
+
+    public static void writeScreenshot(GBDeviceEventScreenshot screenshot, String filename) {
+
+        LOG.info("Will write screenshot: " + screenshot.width + "x" + screenshot.height + "x" + screenshot.bpp + "bpp");
+        final int FILE_HEADER_SIZE = 14;
+        final int INFO_HEADER_SIZE = 40;
+
+        File dir = GBApplication.getContext().getExternalFilesDir(null);
+        if (dir != null) {
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+        }
+        FileOutputStream fos;
+        try {
+            fos = new FileOutputStream(dir + "/" + filename);
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            return;
+        }
+
+        ByteBuffer headerbuf = ByteBuffer.allocate(FILE_HEADER_SIZE + INFO_HEADER_SIZE + screenshot.clut.length);
+        headerbuf.order(ByteOrder.LITTLE_ENDIAN);
+
+        // file header
+        headerbuf.put((byte) 'B');
+        headerbuf.put((byte) 'M');
+        headerbuf.putInt(0); // size in bytes (unconpressed = 0)
+        headerbuf.putInt(0); // reserved
+        headerbuf.putInt(FILE_HEADER_SIZE + INFO_HEADER_SIZE + screenshot.clut.length);
+
+        // info header
+        headerbuf.putInt(INFO_HEADER_SIZE);
+        headerbuf.putInt(screenshot.width);
+        headerbuf.putInt(-screenshot.height);
+        headerbuf.putShort((short) 1); // planes
+        headerbuf.putShort((short) 1); // bit count
+        headerbuf.putInt(0); // compression
+        headerbuf.putInt(0); // length of pixeldata in byte (uncompressed=0)
+        headerbuf.putInt(0); // pixels per meter (x)
+        headerbuf.putInt(0); // pixels per meter (y)
+        headerbuf.putInt(2); // number of colors in CLUT
+        headerbuf.putInt(2); // numbers of used colors
+        headerbuf.put(screenshot.clut);
+        try {
+            fos.write(headerbuf.array());
+            int rowbytes = screenshot.width / 8;
+            byte[] pad = new byte[rowbytes % 4];
+            for (int i = 0; i < screenshot.height; i++) {
+                fos.write(screenshot.data, rowbytes * i, rowbytes);
+                fos.write(pad);
+            }
+            fos.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
