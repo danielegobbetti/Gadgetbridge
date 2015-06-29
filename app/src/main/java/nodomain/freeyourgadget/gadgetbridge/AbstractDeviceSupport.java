@@ -1,13 +1,20 @@
 package nodomain.freeyourgadget.gadgetbridge;
 
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.support.v4.content.LocalBroadcastManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 
@@ -25,6 +32,7 @@ import nodomain.freeyourgadget.gadgetbridge.deviceevents.GBDeviceEventVersionInf
 // maybe need to check for "unread notifications" on device for that.
 public abstract class AbstractDeviceSupport implements DeviceSupport {
     private static final Logger LOG = LoggerFactory.getLogger(AbstractDeviceSupport.class);
+    private static final int NOTIFICATION_ID_SCREENSHOT = 8000;
 
     protected GBDevice gbDevice;
     private BluetoothAdapter btAdapter;
@@ -145,7 +153,40 @@ public abstract class AbstractDeviceSupport implements DeviceSupport {
 
     private void handleGBDeviceEvent(GBDeviceEventScreenshot screenshot) {
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMdd-hhmmss");
+        String filename = "screenshot_" + dateFormat.format(new Date()) + ".bmp";
 
-        GB.writeScreenshot(screenshot, "screenshot_" + dateFormat.format(new Date()) + ".bmp");
+        if (GB.writeScreenshot(screenshot, filename)) {
+            String fullpath = context.getExternalFilesDir(null).toString() + "/" + filename;
+            Bitmap bmp = BitmapFactory.decodeFile(fullpath);
+            Intent intent = new Intent();
+            intent.setAction(android.content.Intent.ACTION_VIEW);
+            intent.setDataAndType(Uri.fromFile(new File(fullpath)), "image/*");
+
+            PendingIntent pIntent = PendingIntent.getActivity(context, 0, intent, 0);
+
+            Intent shareIntent = new Intent(Intent.ACTION_SEND);
+            shareIntent.setType("image/*");
+            shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(new File(fullpath)));
+
+            PendingIntent pendingShareIntent = PendingIntent.getActivity(context, 0, Intent.createChooser(shareIntent, "share screenshot"),
+                    PendingIntent.FLAG_UPDATE_CURRENT);
+
+            Notification notif = new Notification.Builder(context)
+                    .setContentTitle("Screenshot taken")
+                    .setTicker("Screenshot taken")
+                    .setContentText(filename)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setStyle(new Notification.BigPictureStyle()
+                            .bigPicture(bmp))
+                    .setContentIntent(pIntent)
+                    .addAction(android.R.drawable.ic_menu_share, "share", pendingShareIntent)
+                    .build();
+
+
+            notif.flags |= Notification.FLAG_AUTO_CANCEL;
+
+            NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            nm.notify(NOTIFICATION_ID_SCREENSHOT, notif);
+        }
     }
 }
