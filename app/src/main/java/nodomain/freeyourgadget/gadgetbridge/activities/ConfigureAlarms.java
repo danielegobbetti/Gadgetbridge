@@ -2,14 +2,8 @@ package nodomain.freeyourgadget.gadgetbridge.activities;
 
 import android.app.ListActivity;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Bundle;
-import android.preference.PreferenceManager;
 import android.view.MenuItem;
-
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
 
 import nodomain.freeyourgadget.gadgetbridge.BluetoothCommunicationService;
 import nodomain.freeyourgadget.gadgetbridge.GBAlarm;
@@ -22,7 +16,6 @@ import static nodomain.freeyourgadget.gadgetbridge.miband.MiBandConst.PREF_MIBAN
 public class ConfigureAlarms extends ListActivity {
 
     private GBAlarmListAdapter mGBAlarmListAdapter;
-    private Set<String> preferencesAlarmListSet;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,15 +24,7 @@ public class ConfigureAlarms extends ListActivity {
         setContentView(R.layout.activity_configure_alarms);
         getActionBar().setDisplayHomeAsUpEnabled(true);
 
-        SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(this);
-        preferencesAlarmListSet = sharedPrefs.getStringSet(PREF_MIBAND_ALARMS, new HashSet<String>());
-        if (preferencesAlarmListSet.isEmpty()) {
-            //initialize the preferences
-            preferencesAlarmListSet = new HashSet<>(Arrays.asList(GBAlarm.DEFAULT_ALARMS));
-            sharedPrefs.edit().putStringSet(PREF_MIBAND_ALARMS, preferencesAlarmListSet).commit();
-        }
-
-        mGBAlarmListAdapter = new GBAlarmListAdapter(this, preferencesAlarmListSet);
+        mGBAlarmListAdapter = new GBAlarmListAdapter(this, GBAlarm.readAlarmsFromPreferences());
 
         setListAdapter(mGBAlarmListAdapter);
 
@@ -49,10 +34,7 @@ public class ConfigureAlarms extends ListActivity {
     protected void onResume() {
         super.onResume();
 
-        SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(this);
-        preferencesAlarmListSet = sharedPrefs.getStringSet(PREF_MIBAND_ALARMS, new HashSet<String>());
-
-        mGBAlarmListAdapter.setAlarmList(preferencesAlarmListSet);
+        mGBAlarmListAdapter.setAlarmList(GBAlarm.readAlarmsFromPreferences());
         mGBAlarmListAdapter.notifyDataSetChanged();
 
         sendAlarmsToDevice();

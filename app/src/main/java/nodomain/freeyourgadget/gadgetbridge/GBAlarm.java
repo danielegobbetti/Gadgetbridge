@@ -5,6 +5,7 @@ import android.os.Parcel;
 import android.os.Parcelable;
 import android.preference.PreferenceManager;
 
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -202,6 +203,20 @@ public class GBAlarm implements Parcelable, Comparable {
         newPrefs.add(this.toPreferences());
         sharedPrefs.edit().putStringSet(PREF_MIBAND_ALARMS, newPrefs).commit();
         return;
+    }
+
+    public static Set<String> readAlarmsFromPreferences() {
+        SharedPreferences sharedPrefs = PreferenceManager.getDefaultSharedPreferences(GBApplication.getContext());
+
+        Set<String> preferencesAlarmListSet = sharedPrefs.getStringSet(PREF_MIBAND_ALARMS, new HashSet<String>());
+
+        if (preferencesAlarmListSet.isEmpty()) {
+            //initialize the preferences
+            //TODO: this method has the name of a getter, but sets default values
+            preferencesAlarmListSet = new HashSet<>(Arrays.asList(DEFAULT_ALARMS));
+            sharedPrefs.edit().putStringSet(PREF_MIBAND_ALARMS, preferencesAlarmListSet).commit();
+        }
+        return preferencesAlarmListSet;
     }
 
     public static final Creator CREATOR = new Creator() {
